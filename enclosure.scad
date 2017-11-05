@@ -6,34 +6,40 @@ include <../BH-Lib/all.scad>;
 
 module box(
 		dim,
-		corners = 2, // XY corner fillet radius
-		top = 2, // top edge fillet radius
-		bottom = 1, // bottom edge fillet radius
-		seam_overlap = 2,
-		seam_z = 2,
-		tolerance = 0.25,
-		walls = 1.5,
+		r_corner = 2,
+		r_top = 2,
+		r_bot = 1,
+		seam_overlap = 1,
+		seam_z,
+		walls = 1,
 
 		screws = true,
-		screw_cs_style = "bevel", // countersink style [bevel | none | recess]
-		screw_dim = SCREW_M2_DIM,
+		screw_cs_style = "none", // countersink style [bevel | none | recess]
+		screw_dim = SCREW_M2_FLAT_DIM,
 		screw_inset = [0, 0],
-		screw_seam_z = 4,
+		screw_seam_z,
 		screw_surround = 1.5,
-		screws_support = true// attach to box sides
-
+		screw_supports = true, // attach to box sides
+		tolerance_clear = 0.25,
+		tolerance_close = 0.15,
+		tolerance_fit = 0.2,
 	) {
 
 	x = dim[1] > dim[0] ? dim[1] : dim[0];
 	y = dim[1] > dim[0] ? dim[0] : dim[1];
-	z = dim[2];
 
-	screw_cs_dim = [screw_dim[1] + tolerance * 2, screw_dim[2] + tolerance];
-	screw_r_top = screw_dim[0] / 2;
-	screw_r_bot = screw_r_top + tolerance;
+	_corner_r = max(r_bot, r_corner, r_top);
+	if (max(r_bot, r_top) > r_corner)
+		warn(["Corner radius (", r_corner, ") cannot be less than r_top (", r_top, ") or r_bot (", r_bot, ") radius. Adjusted to ", _corner_r]);
+
+	_seam_z = seam_z != undef ? seam_z : dim[2] - walls - r_top;
+	_screw_seam_z = screw_seam_z != undef ? screw_seam_z : _seam_z - seam_overlap;
+
+	screw_r_top = screw_dim[0] / 2 + tolerance_clear;
+	screw_r_bot = screw_dim[0] / 2;
 	screw_inset_x = screw_inset[0] ?
 		max(walls + screw_surround + max(screw_r_top, screw_r_bot), screw_inset[0]) :
-		max(corners, walls + screw_surround + max(screw_r_top, screw_r_bot));
+		max(_corner_r, walls + screw_surround + max(screw_r_top, screw_r_bot));
 	screw_inset_y = screw_inset[1] ?
 		max(walls + screw_surround + max(screw_r_top, screw_r_bot), screw_inset[1]) :
 		walls + screw_surround + max(screw_r_top, screw_r_bot);
@@ -41,144 +47,76 @@ module box(
 	module bottom() {
 		difference() {
 			union() {
-				difference() {
 
-					box();
+				// outer/upper seam portion
+				difference() {
+					solid(r_bot);
+					solid(r_bot, offset = -(walls - tolerance_fit) / 2);
 
 					// remove top half
-					translate([0, 0, seam_z])
+					translate([0, 0, _seam_z])
 					cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
 				}
-				difference() {
 
-					box(walls / 2  + tolerance, walls / 2 - tolerance / 2);
+				// inner/lower seam portion
+				difference() {
+					solid(r_bot);
+					solid(r_bot, offset = -walls);
 
 					// remove top half (leaving gap between inner seams)
-					translate([0, 0, seam_z + seam_overlap - tolerance / 2])
+					translate([0, 0, _seam_z - seam_overlap - tolerance_close / 2])
 					cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
 				}
-				if (screws) {
-					difference() {
-
-						// screw surrounds
-						intersection() {
-							box(inner = true);
-							screw_surrounds(screw_r_bot);
-						}
-
-						// remove top half
-						translate([0, 0, screw_seam_z - tolerance / 2])
-						cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
-					}
-				}
-			}
-
-			// screw holes
-			if (screws) {
-				screw_diffs(screw_r_bot);//, mock = true);
 			}
 		}
-	}
 
-	module box_solid(coords, corners, top, bottom) {
-
-		module corner() {
-			rounded_cylinder(h = coords[2], r = corners, f1 = bottom, f2 = top);
-		}
-
-		translate([-coords[0] / 2, -coords[1] / 2])
-		hull() {
-			translate([corners, corners, 0]) corner();
-			translate([corners, coords[1] - corners, 0]) corner();
-			translate([coords[0] - corners, coords[1] - corners, 0]) corner();
-			translate([coords[0] - corners, corners, 0]) corner();
-		}
-	}
-
-	module box(inset_xy = 0, walls = walls, inner = false, outer = false) {
-
-		module inside() {
-			box_solid([
-					x - (inset_xy * 2 + walls * 2),
-					y - (inset_xy * 2 + walls * 2),
-					z - walls * 2
-				],
-				corners - (inset_xy + walls),
-				top - walls,
-				bottom - walls
-			);
-		}
-
-		module outside() {
-			box_solid([
-					x - inset_xy * 2,
-					y - inset_xy * 2,
-					z,
-				], corners - inset_xy, top, bottom);
-		}
-
-		// inside volume only
-		if (inner) {
-			inside();
-
-		// outside volume only
-		} else if (outer) {
-			 outside();
-
-		// shell
-		} else {
+		if (screws) {
 			difference() {
-				outside();
-				inside();
+
+				// screw surrounds
+				intersection() {
+					solid(r_bot, offset = -walls);
+					screw_surrounds(screw_r_bot);
+				}
+
+				// remove top half
+				translate([0, 0, _screw_seam_z - tolerance_close / 2])
+				cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
+
+				// screw holes
+				if (screws) {
+
+					// prevent from going right through
+//					intersection() {
+//						solid(r_bot, offset = -walls);
+						screw_diffs(screw_r_bot);
+//					}
+				}
 			}
 		}
 	}
 
-	// top
-	module top() {
-		difference() {
-			union() {
-				difference() {
+	module profile(x, offset = 0) {
+		hull()
+		reflect(y = false)
+		translate([x, 0]) {
+			translate([0, -dim[2] / 2])
+			if (r_bot <= 0)
+				translate([offset, offset])
+				translate([-0.05, 0.05])
+				square(0.1, true);
+			else
+				translate([-r_bot, r_bot])
+				circle(r_bot + offset);
 
-					box();
-
-					// remove bottom half
-					translate([0, 0, -z + seam_z + seam_overlap + tolerance / 2])
-					cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
-				}
-				difference() {
-
-					box(walls = walls / 2 - tolerance / 2);
-
-					// remove bottom half
-					translate([0, 0, -z + seam_z])
-					cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
-				}
-				if (screws) {
-					difference() {
-
-						// screw surrounds
-						intersection() {
-							box(inner = true);
-							screw_surrounds(screw_r_top);
-						}
-
-						// remove bottom half
-						translate([0, 0, -z + screw_seam_z + tolerance / 2])
-						cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
-					}
-				}
-			}
-
-			// screw holes
-			if (screws) {
-
-				// prevent from going right through
-				intersection() {
-					box(inner = true);
-					screw_diffs(screw_r_top);
-				}
-			}
+			translate([0, dim[2] / 2])
+			if (r_top <= 0)
+				translate([offset, offset])
+				translate([-0.05, -0.05])
+				square(0.1, true);
+			else
+				translate([-r_top, -r_top])
+				circle(r_top + offset);
 		}
 	}
 
@@ -186,11 +124,15 @@ module box(
 	module screw_diffs(r, mock = false) {
 
 		module diff() {
-			translate([0, 0, screw_dim[2] + tolerance])
-			screw_diff(dim = [r * 2, screw_dim[1], screw_dim[2]], h = z - walls, cs_style = screw_cs_style, mock = mock, tolerance = tolerance);
+			screw_diff(
+				dim = [r * 2, screw_dim[1], screw_dim[2]],
+				h = dim[2] - walls - tolerance_clear - screw_dim[2],
+				cs_style = screw_cs_style,
+				mock = mock,
+				tolerance = tolerance_close);
 		}
 
-		translate([-x / 2, -y / 2, -z / 2]) {
+		translate([-x / 2, -y / 2, dim[2] / 2]) {
 			translate([screw_inset_x, screw_inset_y, 0])
 			diff();
 
@@ -206,23 +148,24 @@ module box(
 	}
 
 	// screw hole walls
-	module screw_surrounds(r) {
+	module screw_surrounds() {
 
 		face_x = screw_inset_y > screw_inset_x;
 
 		module surround() {
-			// TODO: remove extra attach portion at seam
+			// TODO: remove extra attach portion at seam (when screw seam not default)
 			screw_surround(
-				attach = false,
-				cs_dim = screw_cs_dim,
-				h = z,
+				attach = screw_supports,
+				cs_style = screw_cs_style,
+				dim = screw_dim,
+				h = dim[2],
 				inset = screw_inset_y,
-				r = r,
-				walls = screw_surround
-				);
+				walls = screw_surround);
 		}
 
-		translate([-x / 2, -y / 2, -z / 2]) {
+		translate([-x / 2, -y / 2, dim[2] / 2])
+		scale([1, 1, -1])
+		{
 			translate([screw_inset_x, screw_inset_y, 0])
 			rotate([0, 0, face_x ? -90 : 0])
 			surround();
@@ -243,32 +186,78 @@ module box(
 		}
 	}
 
-	translate([0, -(y / 2 + 5), z / 2])
+	module solid(r, offset = 0, top = false) {
+		hull()
+		reflect()
+		for (z = [-1, 1])
+		translate([dim[0] / 2, dim[1] / 2, dim[2] / 2 * z])
+		if (r_corner + r <= 0)
+			translate([offset, offset, offset * z])
+			translate([-0.05, -0.05, -0.05 * z])
+			cube(0.1, true);
+		else
+			if (r + offset > 0 && (z < 0 ? !top : top))
+				translate([-(r_corner), -(r_corner), -r * z])
+				rotate_extrude(angle = 90)
+				translate([r_corner - r, 0])
+				rotate([0, 0, z < 0 ? -90 : 0])
+				segment(90, r + offset);
+			else
+				translate([0, 0, offset * z])
+				translate([-(r_corner), -(r_corner), -0.05 * z])
+				cylinder(h = 0.1, r = r_corner + offset);
+	}
+
+	module top() {
+
+		difference() {
+			union() {
+				// outer/upper seam portion
+				difference() {
+					solid(r_top, top = true);
+
+					// remove bottom half
+					translate([0, 0, -dim[2] + _seam_z])
+					cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
+				}
+				// inner/lower seam portion
+				difference() {
+					solid(r_top, offset = -(walls + tolerance_fit) / 2, top = true);
+
+					// remove bottom half
+					translate([0, 0, -dim[2] + _seam_z - seam_overlap + tolerance_close / 2])
+					cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
+				}
+			}
+
+			solid(r_top, offset = -walls, top = true);
+
+			if (screws)
+				screw_diffs(screw_r_top);
+		}
+
+		if (screws)
+		difference() {
+
+			// screw surrounds
+			intersection() {
+				solid(r_top, offset = -walls, top = true);
+				screw_surrounds(screw_r_top);
+			}
+
+			// remove bottom half
+			translate([0, 0, -dim[2] + _screw_seam_z + tolerance_close / 2])
+			cube([dim[0] * 2, dim[1] * 2, dim[2]], true);
+
+			// screw holes
+			screw_diffs(screw_r_top, mock = true);
+		}
+	}
+
+	translate([0, y / 2 + 5, dim[2] / 2])
 	bottom();
 
-	translate([0, y / 2 + 5, z / 2])
+	translate([0, -(y / 2 + 5), dim[2] / 2])
 	rotate([180, 0])
 	top();
 }
-
-box(
-	dim = [80, 40, 20],
-	corners = 5,
-	top = 2,
-	bottom = 10,
-	seam_z = 5
-);
-
-translate([80, 0])
-box(
-	dim = [60, 60, 15],
-	corners = 30,
-	top = 10,
-	bottom = 2,
-	screw_cs_style = "recess",
-	screw_inset_x = 0,
-	screw_inset_y = 10,
-	screws_support = false,
-	seam_overlap = 1,
-	seam_z = 3
-);
